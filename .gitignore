@@ -1,0 +1,14 @@
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Install artifacts (写到 user home，不会进 git，但保险加上)
+.publish-to-juejin/
+
+# 用户本地 testing
+/tmp/
+*.log
