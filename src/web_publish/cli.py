@@ -176,7 +176,7 @@ def cmd_categories(args) -> int:
 
 
 def cmd_setup(args) -> int:
-    run_setup(platform=args.platform)
+    run_setup(platform=args.platform, mode=("stdin" if args.stdin else "edit"))
     return 0
 
 
@@ -244,6 +244,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     ps = sub.add_parser("setup", help="引导首次写 .env (urllib backend 用)")
     ps.add_argument("--platform", default="juejin", choices=["juejin"])
+    ps.add_argument(
+        "--stdin", action="store_true",
+        help="从 stdin 读 (cat cookie.env | web-publish setup --stdin) 而不是开编辑器",
+    )
     ps.set_defaults(func=cmd_setup)
 
     return p
