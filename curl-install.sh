@@ -2,14 +2,14 @@
 # curl-install.sh — 远程一键安装入口
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/PsChina/publish-to-juejin/main/curl-install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/PsChina/web-publish/main/curl-install.sh | bash
 
 set -euo pipefail
 
-REPO_URL="https://github.com/PsChina/publish-to-juejin.git"
-INSTALL_DIR="${PUBLISH_JUEJIN_DIR:-$HOME/.local/share/publish-to-juejin}"
+REPO_URL="https://github.com/PsChina/web-publish.git"
+INSTALL_DIR="${PUBLISH_JUEJIN_DIR:-$HOME/.local/share/web-publish}"
 
-echo "▶ publish-to-juejin 远程安装器"
+echo "▶ web-publish 远程安装器"
 echo "  目标: $INSTALL_DIR"
 echo ""
 
