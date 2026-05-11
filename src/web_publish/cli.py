@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__
+from . import __version__, state
 from .adapters import load_adapter, resolve_category, resolve_tag_ids
 from .backends import BackendError, make_backend
 from .juejin import JuejinClient
@@ -70,6 +70,7 @@ def cmd_publish(args) -> int:
         out["article_id"] = article_id
         out["spost_url"] = f"https://juejin.cn/spost/{article_id}"
         out["post_url"] = f"https://juejin.cn/post/{article_id}"
+        state.record_publish(backend_name=args.backend)
     _emit(out)
     return 0
 
@@ -134,6 +135,7 @@ def cmd_update(args) -> int:
         out["status"] = "republished_pending_review"
         out["article_id"] = pub.get("article_id", args.article_id)
         out["post_url"] = f"https://juejin.cn/post/{out['article_id']}"
+        state.record_publish(backend_name=args.backend)
     _emit(out)
     return 0
 
@@ -177,7 +179,35 @@ def cmd_categories(args) -> int:
 
 def cmd_setup(args) -> int:
     run_setup(platform=args.platform, mode=("stdin" if args.stdin else "edit"))
+    # setup_wizard 在 _file_filled() 通过后才返回, 这里 .env 一定 OK
+    state.record_setup_completed()
     return 0
+
+
+def cmd_state(args) -> int:
+    """查询 / 修改 / 重置 state.json — 给 Claude 在 skill 层做决策用."""
+    action = args.state_action
+    if action == "get" or action is None:
+        import os.path
+        env_exists = os.path.isfile(os.path.expanduser("~/.web-publish/.env"))
+        s = state.load()
+        s["_env_exists"] = env_exists
+        s["_recommendation"] = state.recommend(s, env_exists=env_exists)
+        _emit(s)
+        return 0
+    if action == "reset":
+        state.reset()
+        _emit({"reset": True})
+        return 0
+    if action == "record-setup-started":
+        s = state.record_setup_started()
+        _emit({"recorded": "setup-started", "state": s})
+        return 0
+    if action == "record-skip":
+        s = state.record_skip()
+        _emit({"recorded": "skip", "state": s})
+        return 0
+    raise SystemExit(f"未知 state action: {action}")
 
 
 # ---- main ----
@@ -249,6 +279,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="从 stdin 读 (cat cookie.env | web-publish setup --stdin) 而不是开编辑器",
     )
     ps.set_defaults(func=cmd_setup)
+
+    pst = sub.add_parser(
+        "state",
+        help="查询 / 修改 state.json (Claude 用来做 cookie 引导决策)",
+    )
+    pst.add_argument(
+        "state_action", nargs="?", default="get",
+        choices=["get", "reset", "record-setup-started", "record-skip"],
+        help="默认 get",
+    )
+    pst.set_defaults(func=cmd_state)
 
     return p
 

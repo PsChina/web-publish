@@ -30,19 +30,49 @@ description: 通过 `web-publish` Python CLI 把 markdown 发布或更新到掘�
 | CSDN | 🟡 待 | endpoint 不同 |
 | 知乎专栏 | 🟡 待 | OpenCLI zhihu adapter 只含读操作 |
 
-## 前置检查
+## 前置检查 + Cookie 引导状态机
+
+**每次用户说"发文章"前先跑 state 查询**，决定走哪条 backend：
 
 ```bash
-command -v web-publish || echo "重跑 install.sh"
-web-publish health juejin    # opencli-bridge 模式; 返回 ok:true 即过
+web-publish state            # 输出 JSON, 含 _recommendation.action
 ```
 
-| 失败信号 | 处理 |
+`_recommendation.action` 的 6 个值 + Claude 应做的事：
+
+| action | 含义 | Claude 行为 |
+|---|---|---|
+| `use_urllib` | `.env` 在 + setup 完成 / 用户手动写 | **静默走 urllib 发**, 不问任何问题 |
+| `guide_setup_first_time` | 首次发文章, 没引导过 cookie | 1. `web-publish state record-setup-started`<br>2. 告诉用户"首次建议 30 秒配 cookie, 之后再发不烦"<br>3. 等用户回复:<br>  - 用户说"配", 引导跑 `web-publish setup` (开编辑器) → 完成后 state 自动 `use_urllib`<br>  - 用户说"先发吧 / 等下 / 不想配" → 当场 `record-skip` + 用 `--backend opencli-bridge` 发本篇 |
+| `use_opencli_after_timeout` | 引导过 setup 但 .env 仍不在 + 距首次引导 >10 分钟 | **静默用 opencli-bridge 发**, 不再阻塞用户。文末轻提一句"上次 cookie 没配完, 想配跑 `web-publish setup`" |
+| `use_opencli_skipped` | 引导过, 用户拖延中, 未超时 | 用 `--backend opencli-bridge` 发, 不重复引导 (用户已经知道) |
+| `use_opencli_dismissed` | 跑过 3 次 skip, 用户表达完全不想配 | **静默走 opencli-bridge**, **不再问 cookie**。重置只能用 `web-publish state reset` |
+| `ask_after_publish` | (内部) publish 成功后, skip_count < 3 + 走的是 opencli | publish 成功后温和问一次: "要不要现在配 cookie? 之后 +更稳", 用户答 no → `record-skip` |
+
+### 关键约束
+
+- **绝不**自己写 logic 判断 `cookie_skip_count` / `cookie_setup_started_at` —— 跑 `web-publish state` 看 `_recommendation` 就够
+- **绝不**对 `use_opencli_dismissed` 状态再问 cookie —— 用户已经表过态
+- **每次 publish 成功后**: 如果当时走的是 opencli + `cookie_skip_count < 3` + `not dismissed` → 温和问一句, 用户答 yes 引导 setup, 答 no 调 `record-skip`
+
+### 状态命令清单
+
+```bash
+web-publish state                          # get + recommendation
+web-publish state reset                    # 清状态 (重置 cookie 提示)
+web-publish state record-setup-started     # Claude 引导用户跑 setup 时调
+web-publish state record-skip              # 用户拒绝配 cookie 时调
+# setup 命令成功完成后 CLI 自动调 record_setup_completed, Claude 不用管
+```
+
+### 其它失败信号
+
+| 信号 | 处理 |
 |---|---|
-| `command not found: web-publish` | 重跑 install.sh，或 `$HOME/.local/bin` 不在 PATH |
-| `BackendError: 找不到 opencli` | `npm install -g @jackwener/opencli` |
-| `err_no=...请重新登录` | 浏览器去 juejin.cn 重新登录 |
-| `BackendError: 找不到 .env`（urllib 模式） | 跑 `web-publish setup` 引导写 .env |
+| `command not found: web-publish` | 重跑 install.sh, 或 `$HOME/.local/bin` 不在 PATH |
+| `BackendError: 找不到 opencli` (opencli-bridge) | `npm install -g @jackwener/opencli` |
+| `err_no=...请重新登录` | 让用户浏览器去掘金重新登录 |
+| `Extension: not connected` (opencli-bridge) | 引导 chrome://extensions 重载, 或降级 urllib |
 
 ## 流程 A：发新文章
 

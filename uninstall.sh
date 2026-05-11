@@ -55,6 +55,7 @@ if [ -d "$INSTALL_DIR" ]; then
     echo "         - opencli-extension/  (Chrome extension 解压文件)"
     echo "         - venv/               (Python venv: web-publish CLI 实体)"
     echo "         - .env                (urllib backend cookie, 如跑过 setup)"
+    echo "         - state.json          (publish 计数 / cookie 引导互动状态)"
     echo "       要彻底清: rm -rf $INSTALL_DIR"
 fi
 echo ""
