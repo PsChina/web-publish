@@ -8,11 +8,13 @@ echo "▶ web-publish uninstaller"
 INSTALL_DIR="$HOME/.web-publish"
 CLAUDE_SKILLS="$HOME/.claude/skills"
 CLAUDE_COMMANDS="$HOME/.claude/commands"
+LOCAL_BIN="$HOME/.local/bin"
 
-# 1. 删 skill / command
-echo "[1/3] 删 skill / slash command..."
+# 1. 删 skill / command + web-publish CLI 软链
+echo "[1/3] 删 skill / slash command / CLI 软链..."
 rm -rf "$CLAUDE_SKILLS/web-publish"
 rm -f "$CLAUDE_COMMANDS/publish.md"
+rm -f "$LOCAL_BIN/web-publish"
 echo "       ✓ 已删"
 
 # 2. 询问要不要卸载 OpenCLI 全局 npm 包
@@ -49,8 +51,10 @@ echo ""
 echo "[3/3] 数据目录 + Chrome extension:"
 if [ -d "$INSTALL_DIR" ]; then
     echo "       $INSTALL_DIR 仍含:"
-    echo "         - adapters/        (平台 endpoint 配置)"
+    echo "         - adapters/           (平台 endpoint 配置)"
     echo "         - opencli-extension/  (Chrome extension 解压文件)"
+    echo "         - venv/               (Python venv: web-publish CLI 实体)"
+    echo "         - .env                (urllib backend cookie, 如跑过 setup)"
     echo "       要彻底清: rm -rf $INSTALL_DIR"
 fi
 echo ""

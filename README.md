@@ -4,16 +4,18 @@
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)](https://github.com/PsChina/web-publish)
 
 > Claude Code 一行命令把 markdown 发布到掘金 / CSDN / 知乎 / 思否 等技术博客平台。
-> 复用你已登录的 Chrome session — 不要 API key / 不要 cookie 复制 / 不要扫码。
+> v0.3 Python SDK + dual backend：浏览器同源 fetch 模式（零 cookie 配置）+ .env / urllib 模式（服务器友好）。
 
 ```
 你: /publish juejin ./article.md
 Claude:
-  1. Read 文章
-  2. 优化（标题字数 / SEO 首段 / 推 tag / 80 字摘要 / 分类）
-  3. 通过 OpenCLI 调你 Chrome 浏览器的已登录 session 操作平台编辑器
-  4. WebFetch 验证文章上线
+  1. Read 文章一次（做内容优化决策：标题字数 / tag / 80 字摘要）
+  2. Bash 调 `web-publish publish juejin ./article.md --title X --brief Y ...`
+  3. CLI 内部 → opencli-bridge → Chrome 同源 fetch → 掘金 API
+  4. 返回 JSON {article_id, post_url, status}
   5. 给你 URL + 冷启动建议
+
+整个发布对 Claude 上下文 ≈ 300 tokens（不进 markdown 二次 / 不进 response data）。
 ```
 
 ## Quick start
@@ -26,6 +28,7 @@ curl -sSL https://raw.githubusercontent.com/PsChina/web-publish/main/curl-instal
 
 脚本会自动：
 - 检测 / 装 Node.js（>=21）+ `@jackwener/opencli`
+- 装 Python 3 venv + `web-publish` CLI 到 `~/.web-publish/venv/`，软链到 `~/.local/bin/web-publish`
 - 部署 skill + `/publish` slash command 到 `~/.claude/`
 - **下载并解压**最新的 Chrome Browser Bridge extension 到 `~/.web-publish/opencli-extension/`
 - **打开** Chrome 的 `chrome://extensions/` 页面
@@ -43,7 +46,8 @@ Chrome 已经被脚本帮你打开 `chrome://extensions/`，做 3 件事：
 ### 3. 验证连通
 
 ```bash
-opencli doctor
+opencli doctor                # Chrome extension 连通 OK
+web-publish health juejin     # Python CLI → 浏览器 → 掘金 API 全链路 OK
 ```
 
 期望输出：
@@ -52,6 +56,7 @@ opencli doctor
 [OK] Daemon: running
 [OK] Extension: connected
 [OK] Connectivity: passed
+{"platform": "juejin", "backend": "opencli-bridge", "ok": true, "first_article_title": "..."}
 ```
 
 > 如果 Extension 显示 not connected，pin 一下 extension 图标 → 看到亮绿点表示 daemon 已连上。
@@ -84,37 +89,84 @@ opencli doctor
 4. **symlink fallback**：Windows 上 `ln -s` 通常缺 SeCreateSymbolicLinkPrivilege 权限会失败，脚本自动 fallback 到 `cp -r`（功能一样，但改 skill 源码后要重跑 `install.sh` 同步）
 5. **gh CLI 可选**：脚本下载 extension 优先用 `gh release download`，没装 gh 会自动 fallback 到 `curl`
 
-## 工作原理（v0.2）
+## 工作原理（v0.3）
 
 ```
 Claude Code (主对话)
-    ↓  /publish juejin ./article.md
+    ↓  /publish juejin ./article.md  (Claude Read 一次 markdown 做内容优化决策)
 web-publish skill
-    ↓  Read markdown + 内容优化（标题字数 / tag / 摘要）
-    ↓  opencli browser eval（在 juejin.cn page 里跑同源 fetch）
-OpenCLI daemon (npm 包)
-    ↓  Chrome Native Messaging
-Chrome Browser Bridge extension
-    ↓  你的 Chrome 已登录 session
-POST /content_api/v1/article_draft/create
-POST /content_api/v1/article/publish
+    ↓  Bash 调一行 CLI
+web-publish CLI (Python, ~/.local/bin/web-publish)
+    ↓  根据 --backend 选 backend (默认 opencli-bridge)
+    │
+    ├─ opencli-bridge 模式 (默认):
+    │   ↓  subprocess opencli browser eval "<JS>"
+    │   ↓  Chrome Native Messaging
+    │   Chrome Browser Bridge extension
+    │   ↓  在已登录 juejin.cn page 里跑 fetch(..., credentials:'include')
+    │   ↓  HttpOnly sessionid 同源自动带
+    │
+    └─ urllib 模式:
+        ↓  读 ~/.web-publish/.env (JUEJIN_COOKIE / UUID)
+        ↓  urllib POST
+    │
+    └─ 任一 backend → 掘金 API:
+       POST /content_api/v1/article_draft/create
+       POST /content_api/v1/article/publish
+       → 返回 article_id
+    ↓
+CLI 输出 1 行 JSON 给 Claude:
+    {"draft_id":"...","article_id":"...","post_url":"https://juejin.cn/post/..."}
 ```
 
-**关键**：`fetch(..., {credentials: 'include'})` + 同源请求 = HttpOnly sessionid 浏览器自动带，credential 全程不离开浏览器，不需要 API key / cookie 复制 / 扫码。
+**Token 经济性**：Claude 上下文只看到 1 行 Bash + 1 行 JSON ≈ 300 tokens / 篇。markdown 内容 / API response data 都封装在 CLI 内部，不进 Claude 上下文。
 
-v0.1 走 DOM click 操作（fill 标题 / setValue 内容 / click 发布），v0.2 直接 API（2 个 fetch 一气发完，零 DOM）。v0.2 默认，DOM 降级为 fallback。
+**v0.3 vs 历史版本**：
+- v0.1 (旧文 Python urllib) — 用户手抓 6 个 credential 写 .env，每次发文 ~1k tokens
+- v0.2 (Claude 直生成 fetch JS) — 零 .env 但每次发文 5-14k Claude tokens
+- **v0.3 (Python CLI + dual backend)** — 零 .env (opencli-bridge) 或 .env (urllib)，每次发文 ~300 tokens（**v0.2 的 1/20**）
 
 ## 支持的平台
 
-| 平台 | API 路线 | DOM fallback | 备注 |
-|---|---|---|---|
-| 掘金（juejin.cn） | ✅ 发新文章 + update 已发文 | ✅ | adapter 见 `adapters/juejin.yaml` |
-| CSDN | 🟡 待实测 | 🟡 | 类似流程，endpoint 不同 |
-| 知乎专栏 | 🟡 待实测 | 🟡 | OpenCLI zhihu adapter 只含读操作 |
-| 思否 SegmentFault | 🟡 待评估 | 🟡 | |
-| 博客园 | 🟡 待评估 | 🟡 | |
+| 平台 | publish | update | list / health | 备注 |
+|---|---|---|---|---|
+| 掘金（juejin.cn） | ✅ | ✅ | ✅ | adapter 见 `adapters/juejin.yaml` |
+| CSDN | 🟡 待 | 🟡 待 | 🟡 待 | endpoint 类似，待实测 |
+| 知乎专栏 | 🟡 待 | 🟡 待 | 🟡 待 | |
+| 思否 SegmentFault | 🟡 待 | 🟡 待 | 🟡 待 | |
+| 博客园 | 🟡 待 | 🟡 待 | 🟡 待 | |
 
-新增平台流程：在已登录平台的 page 跑 `opencli browser network --since 30s` 抓真实 publish endpoint → 写一份 `adapters/<platform>.yaml`，30 分钟搞定一个平台。
+新增平台流程：在已登录平台 page 跑 `opencli browser network --since 30s` 抓真实 publish endpoint + body schema → 写一份 `adapters/<platform>.yaml` → 在 `src/web_publish/` 加一个 `<platform>.py` client 复用现有 backend，30 分钟一个平台。
+
+## CLI 速查
+
+```bash
+# 发文章
+web-publish publish juejin ./article.md \
+  --title "标题" --brief "摘要" \
+  --tag-ids "AI编程,OpenAI" --category "开发工具"
+
+# 只创建草稿不发
+web-publish publish juejin ./article.md ... --draft-only
+
+# 更新文章末尾追加
+web-publish update juejin <article_id> --append-file ./supp.md
+
+# 替换全文
+web-publish update juejin <article_id> --mark-content-file ./new.md
+
+# 列我的文章
+web-publish list juejin --limit 20
+
+# 健康检查
+web-publish health juejin
+
+# 分类 id 表
+web-publish categories juejin
+
+# urllib 模式首次写 .env (服务器场景)
+web-publish setup
+```
 
 ## 为什么选择这个项目
 

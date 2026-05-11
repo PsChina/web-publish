@@ -32,7 +32,7 @@ echo "  platform: $PLATFORM"
 echo ""
 
 # ===== Step 1: Node.js + npm 检测 =====
-echo "[1/4] 检测 Node.js (>=21)..."
+echo "[1/5] 检测 Node.js (>=21)..."
 if ! command -v node >/dev/null 2>&1; then
     echo "✗ 没装 Node.js"
     echo "  装一下:"
@@ -59,7 +59,7 @@ echo "  ✓ Node $(node --version)"
 echo ""
 
 # ===== Step 2: 装 OpenCLI =====
-echo "[2/4] 装 OpenCLI ($OPENCLI_PACKAGE)..."
+echo "[2/5] 装 OpenCLI ($OPENCLI_PACKAGE)..."
 
 # 把 npm 全局 bin 加进 PATH (cover 自定义 prefix 如 ~/.npm-global)
 npm_global_bin() {
@@ -98,8 +98,48 @@ else
 fi
 echo ""
 
-# ===== Step 3: 部署 skill / command / adapters =====
-echo "[3/4] 部署 skill / slash command / adapters..."
+# ===== Step 3: 装 Python web-publish CLI (v0.3) =====
+echo "[3/5] 装 web-publish Python CLI (v0.3)..."
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "✗ 没装 python3 (>=3.9)"
+    case "$PLATFORM" in
+        darwin)  echo "    brew install python@3.12" ;;
+        linux)   echo "    sudo apt install python3 python3-venv  # 或 dnf / pacman 等价" ;;
+        windows) echo "    去 https://python.org 下 3.12 装好后重跑本脚本" ;;
+    esac
+    exit 1
+fi
+PY_VENV="$INSTALL_DIR/venv"
+if [ ! -d "$PY_VENV" ]; then
+    python3 -m venv "$PY_VENV"
+    echo "       ✓ 建 venv: $PY_VENV"
+fi
+"$PY_VENV/bin/pip" install --quiet --upgrade pip >/dev/null 2>&1 || true
+"$PY_VENV/bin/pip" install --quiet -e "$PROJECT_ROOT" 2>&1 | tail -3
+WEB_PUBLISH_BIN="$PY_VENV/bin/web-publish"
+if [ ! -x "$WEB_PUBLISH_BIN" ]; then
+    # Windows: bin → Scripts
+    WEB_PUBLISH_BIN="$PY_VENV/Scripts/web-publish"
+fi
+if [ ! -x "$WEB_PUBLISH_BIN" ] && [ ! -f "$WEB_PUBLISH_BIN" ]; then
+    echo "✗ web-publish CLI 装失败"
+    exit 1
+fi
+
+# 把 web-publish 软链到 ~/.local/bin (PATH 上常见位置)
+LOCAL_BIN="$HOME/.local/bin"
+mkdir -p "$LOCAL_BIN"
+ln -sf "$WEB_PUBLISH_BIN" "$LOCAL_BIN/web-publish" 2>/dev/null \
+    || cp -f "$WEB_PUBLISH_BIN" "$LOCAL_BIN/web-publish"
+echo "       ✓ web-publish CLI → $LOCAL_BIN/web-publish"
+case ":$PATH:" in
+    *":$LOCAL_BIN:"*) ;;
+    *) echo "       ⚠ $LOCAL_BIN 不在 PATH; 加 'export PATH=\"\$HOME/.local/bin:\$PATH\"' 到 ~/.zshrc 或 ~/.bashrc" ;;
+esac
+echo ""
+
+# ===== Step 4: 部署 skill / command / adapters =====
+echo "[4/5] 部署 skill / slash command / adapters..."
 mkdir -p "$CLAUDE_SKILLS" "$CLAUDE_COMMANDS" "$ADAPTERS_DIR"
 
 deploy_link() {
@@ -132,8 +172,8 @@ if [ -d "$PROJECT_ROOT/adapters" ]; then
 fi
 echo ""
 
-# ===== Step 4: 自动下载 + 解压 Chrome Browser Bridge extension =====
-echo "[4/4] Chrome Browser Bridge extension"
+# ===== Step 5: 自动下载 + 解压 Chrome Browser Bridge extension =====
+echo "[5/5] Chrome Browser Bridge extension"
 EXT_DIR="$INSTALL_DIR/opencli-extension"
 EXT_ZIP_GLOB="$INSTALL_DIR/opencli-extension-*.zip"
 
@@ -189,9 +229,11 @@ echo "✅ 安装完成"
 echo ""
 echo "下一步:"
 echo "  1. 在 Chrome 里 Load unpacked → $EXT_DIR"
-echo "  2. 验证连通: opencli doctor"
+echo "  2. 验证连通: opencli doctor && web-publish health juejin"
 echo "  3. 浏览器登录目标平台 (juejin.cn / csdn.net / zhihu.com)"
 echo "  4. 跑 claude，输入: /publish juejin path/to/article.md"
 echo "     或直接说: '把 ./article.md 发到掘金'"
+echo ""
+echo "  服务器 / 无浏览器场景: 跑 'web-publish setup' 走 urllib backend (用 .env cookie)"
 echo ""
 echo "卸载: ./uninstall.sh"
