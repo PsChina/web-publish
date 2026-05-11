@@ -1,0 +1,122 @@
+platform: juejin
+host: https://juejin.cn
+api_base: https://api.juejin.cn
+strategy: api   # api 优先 / dom 兜底
+
+# 跨平台说明（macOS / Linux / Windows MINGW64）
+# - 所有 opencli 命令都是同一份 CLI，shell 层兼容
+# - 用 base64 传 markdown 给 page eval（避免 quote 转义炸裂）
+#   Windows MINGW64: 用 git bash 自带的 base64；不要在 PowerShell 直接跑（语法不同）
+# - 路径用 $HOME（macOS/Linux）或 $USERPROFILE（Windows）均可被 bash 解析
+
+# ===== Endpoints (2026-05-11 实测) =====
+endpoints:
+  # ✓ 不需签名，credentials:include 同源带 cookie 即可
+  list_by_user:   POST /content_api/v1/article/list_by_user
+  draft_detail:   POST /content_api/v1/article_draft/detail
+  draft_create:   POST /content_api/v1/article_draft/create
+  draft_update:   POST /content_api/v1/article_draft/update
+  publish:        POST /content_api/v1/article/publish
+
+  # ✗ 需 msToken + a_bogus 反爬签名（page 内 axios wrapper 自动算，普通 fetch 拿不到）
+  article_detail: POST /content_api/v1/article/detail    # 用 list_by_user + draft_detail 组合绕开
+
+# ===== Query string 常量 (URL 上的) =====
+query_params:
+  aid: "2608"
+  uuid: ""          # 用户级常量；从已捕获请求的 URL 抠（network --since 30s）
+  spider: "0"
+
+# ===== Body Schema 实测 =====
+# draft_create / draft_update body
+draft_payload:
+  title: string                # ≤80 字
+  mark_content: string         # markdown 全文
+  brief_content: string        # 摘要 ≤100 字
+  category_id: string          # 见下面 categories 表
+  tag_ids: [string]            # ⚠ 必须 string array，detail 返回的是 number 要转
+  cover_image: string          # 可空 ""
+  edit_type: 10                # 10=markdown
+  html_content: "deprecated"   # 历史字段
+
+# update 额外字段
+draft_update_extra:
+  id: string                   # = draft_id
+
+# publish body
+publish_payload:
+  draft_id: string
+  sync_to_org: false
+  column_ids: []
+  theme_ids: []
+
+# ===== 分类 ID (实测 2026-05) =====
+categories:
+  后端:    "6809637769959178254"
+  前端:    "6809637767543259144"
+  Android: "6809635626879549454"
+  iOS:     "6809635626661445640"
+  人工智能: "6809637773935378440"
+  开发工具: "6809637771511070734"   # ✓ verified (穷鬼大救星 + v0.2 补遗)
+  代码人生: "6809637776263217160"
+  阅读:    "6809637772874219534"
+
+# ===== Tag ID 缓存（从已发文章反查；新 tag 需要 query_tag 现查） =====
+known_tags:
+  AI编程: "7467857238494020000"
+  OpenAI: "6809641073527226000"
+  AIGC:   "7197380506562871000"
+
+# ===== 内容优化规则 =====
+content_rules:
+  title_max: 80
+  title_recommended_range: [20, 30]
+  brief_max: 100
+  tags_max: 5
+  tags_recommended_range: [3, 5]
+  category_required: true
+
+# ===== v0.1 DOM fallback selectors（API 不可用 / 签名 endpoint 时降级用） =====
+dom_fallback:
+  editor_url:               https://juejin.cn/editor/drafts/new
+  title_input_placeholder:  "输入文章标题..."
+  editor_class:             ".CodeMirror"             # bytemd, CodeMirror 5
+  editor_set_value_js:      "document.querySelector('.CodeMirror').CodeMirror.setValue(md)"
+  publish_button_name:      "发布"
+  confirm_button_name:      "确定并发布"
+  success_url_prefix:       "https://juejin.cn/spost/"  # 审核中临时路径，过审跳 /post/
+
+# ===== 流程定义 (新文章) =====
+flow_new_article:
+  - step: read_markdown
+    action: Read(path)
+  - step: optimize
+    rules: content_rules
+  - step: tag_lookup_or_use_known
+    note: 新 tag 用 page state 抓 tag/query_tag endpoint 现查；已知用 known_tags 表
+  - step: create_draft
+    fetch: draft_create
+  - step: publish
+    fetch: publish
+  - step: verify
+    action: opencli browser open <article_url> + check title
+
+# ===== 流程定义 (Update 已发布文章) =====
+flow_update_article:
+  - step: list_articles
+    fetch: list_by_user
+    body: {page_no: 1, page_size: 50, audit_status: null, status: null}
+    note: 必须含 audit_status:null + status:null，否则返回空
+  - step: find_target
+    by: article_id or title match → 拿 draft_id
+  - step: fetch_old_content
+    fetch: draft_detail
+    body: {draft_id}
+  - step: build_new_content
+    action: 拼接 / 替换 mark_content
+  - step: update_draft
+    fetch: draft_update
+    body_note: tag_ids 必须 string array，detail 返回的 number 要 .map(String)
+  - step: republish
+    fetch: publish
+    note: 已发布文章 republish 触发审核，期间公开版显示旧版

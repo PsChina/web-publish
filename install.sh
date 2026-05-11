@@ -60,15 +60,38 @@ echo ""
 
 # ===== Step 2: 装 OpenCLI =====
 echo "[2/4] 装 OpenCLI ($OPENCLI_PACKAGE)..."
+
+# 把 npm 全局 bin 加进 PATH (cover 自定义 prefix 如 ~/.npm-global)
+npm_global_bin() {
+    local prefix
+    prefix="$(npm prefix -g 2>/dev/null)" || return 1
+    # macOS/Linux: <prefix>/bin    Windows nodist: <prefix> 本身
+    if [ -d "$prefix/bin" ]; then echo "$prefix/bin"
+    elif [ -d "$prefix" ];   then echo "$prefix"
+    fi
+}
+
+ensure_npm_bin_in_path() {
+    local bin_dir; bin_dir="$(npm_global_bin)" || return 0
+    [ -z "$bin_dir" ] && return 0
+    case ":$PATH:" in *":$bin_dir:"*) ;; *) export PATH="$bin_dir:$PATH" ;; esac
+}
+
+ensure_npm_bin_in_path
+
 if command -v opencli >/dev/null 2>&1; then
     OPENCLI_VERSION="$(opencli --version 2>&1 | head -1)"
     echo "       已装: $OPENCLI_VERSION"
 else
     echo "       npm install -g $OPENCLI_PACKAGE ..."
     npm install -g "$OPENCLI_PACKAGE" 2>&1 | tail -3
+    ensure_npm_bin_in_path
     if ! command -v opencli >/dev/null 2>&1; then
+        BIN_DIR="$(npm_global_bin)"
         echo "✗ OpenCLI 装完但 'opencli' 不在 PATH"
-        echo "  可能是 npm prefix 没在 PATH，try: export PATH=\"\$(npm prefix -g)/bin:\$PATH\""
+        echo "  npm prefix: $(npm prefix -g)"
+        echo "  把 '$BIN_DIR' 加到你的 PATH 后重跑 ./install.sh"
+        echo "  zsh: echo 'export PATH=\"$BIN_DIR:\$PATH\"' >> ~/.zshrc && source ~/.zshrc"
         exit 1
     fi
     echo "       ✓ $(opencli --version 2>&1 | head -1)"
@@ -109,33 +132,66 @@ if [ -d "$PROJECT_ROOT/adapters" ]; then
 fi
 echo ""
 
-# ===== Step 4: 引导用户装 Chrome Browser Bridge extension =====
+# ===== Step 4: 自动下载 + 解压 Chrome Browser Bridge extension =====
 echo "[4/4] Chrome Browser Bridge extension"
+EXT_DIR="$INSTALL_DIR/opencli-extension"
+EXT_ZIP_GLOB="$INSTALL_DIR/opencli-extension-*.zip"
+
+# 已解压 + 有 manifest.json 视为已就绪
+if [ -f "$EXT_DIR/manifest.json" ]; then
+    echo "       ✓ extension 已解压: $EXT_DIR"
+else
+    if command -v gh >/dev/null 2>&1; then
+        echo "       下载最新 extension (via gh release)..."
+        ( cd "$INSTALL_DIR" && gh release download -R jackwener/opencli \
+            -p "opencli-extension-*.zip" --clobber 2>&1 ) | tail -3 || true
+    elif command -v curl >/dev/null 2>&1; then
+        echo "       下载最新 extension (via curl)..."
+        EXT_URL="$(curl -s https://api.github.com/repos/jackwener/opencli/releases/latest \
+                   | grep browser_download_url | grep opencli-extension | head -1 \
+                   | sed -E 's/.*"(https[^"]+)".*/\1/')"
+        if [ -n "$EXT_URL" ]; then
+            curl -fsSL "$EXT_URL" -o "$INSTALL_DIR/$(basename "$EXT_URL")"
+        fi
+    fi
+
+    # 解压最新的 zip
+    LATEST_ZIP="$(ls -t $EXT_ZIP_GLOB 2>/dev/null | head -1)"
+    if [ -n "$LATEST_ZIP" ] && command -v unzip >/dev/null 2>&1; then
+        rm -rf "$EXT_DIR"
+        unzip -q "$LATEST_ZIP" -d "$EXT_DIR"
+        echo "       ✓ extension 解压到: $EXT_DIR"
+    else
+        echo "       ⚠ 无法自动下载 extension，请手动："
+        echo "         1. 下 https://github.com/jackwener/opencli/releases/latest 的 opencli-extension-*.zip"
+        echo "         2. 解压到任意目录"
+    fi
+fi
 echo ""
-echo "       OpenCLI 用 Chrome extension 跟你的浏览器通信，复用已登录态。"
-echo "       这是一次性操作（换机才需要重做）。"
+
+# 平台相关：尝试帮用户开 Chrome 的 extensions 页面
+echo "       下面把 Chrome 的 extensions 页面打开，你只要做 3 件事:"
+echo "         1. 右上角开 'Developer mode'"
+echo "         2. 点 'Load unpacked'"
+echo "         3. 选目录: $EXT_DIR"
 echo ""
-echo "       方式 A — Chrome Web Store (推荐):"
-echo "         1. https://chrome.google.com/webstore"
-echo "         2. 搜 'OpenCLI Browser Bridge'"
-echo "         3. 点 'Add to Chrome' 并授权"
-echo ""
-echo "       方式 B — Load unpacked (商店还没上架时):"
-echo "         1. 从 https://github.com/jackwener/OpenCLI/releases 下 extension.zip"
-echo "         2. 解压"
-echo "         3. Chrome 地址栏: chrome://extensions"
-echo "         4. 开 'Developer mode'"
-echo "         5. 'Load unpacked' → 选解压目录"
-echo ""
-echo "       装好后跑 'opencli doctor' 验证连通"
+case "$PLATFORM" in
+    darwin)  open -a "Google Chrome" "chrome://extensions/" 2>/dev/null || true ;;
+    linux)   ( google-chrome "chrome://extensions/" 2>/dev/null \
+              || chromium "chrome://extensions/" 2>/dev/null \
+              || xdg-open "chrome://extensions/" 2>/dev/null ) & ;;
+    windows) start chrome "chrome://extensions/" 2>/dev/null || true ;;
+esac
+echo "       (如果 Chrome 没自动开，地址栏粘 chrome://extensions/)"
 echo ""
 
 echo "✅ 安装完成"
 echo ""
 echo "下一步:"
-echo "  1. 装 Chrome Browser Bridge extension (上面)"
-echo "  2. 浏览器登录目标平台 (juejin.cn / csdn.net / zhihu.com)"
-echo "  3. 跑 claude，输入: /publish juejin path/to/article.md"
+echo "  1. 在 Chrome 里 Load unpacked → $EXT_DIR"
+echo "  2. 验证连通: opencli doctor"
+echo "  3. 浏览器登录目标平台 (juejin.cn / csdn.net / zhihu.com)"
+echo "  4. 跑 claude，输入: /publish juejin path/to/article.md"
 echo "     或直接说: '把 ./article.md 发到掘金'"
 echo ""
 echo "卸载: ./uninstall.sh"

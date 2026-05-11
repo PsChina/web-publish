@@ -1,172 +1,261 @@
 ---
 name: web-publish
-description: 通过 OpenCLI（jackwener/OpenCLI）+ Chrome Browser Bridge 复用你已登录的浏览器 session，自动把 markdown 发布到掘金 / CSDN / 知乎 / 思否 等技术博客平台。当用户说"发到掘金"、"发 CSDN"、"发到 X 平台"、给一个 .md 文件并问怎么发、或显式 /publish <platform> <path> 命令时触发。流程：Read markdown → 内容优化（标题 / 首段 / tag / 摘要） → 通过 OpenCLI 的 browser adapter 调用 navigate / fill / click / submit 操作目标平台的编辑器页面 → 完成发布后 WebFetch 文章 URL 验证。前置条件：本机已 npm install -g @jackwener/opencli，已装 Chrome Browser Bridge extension，用户已在浏览器登录目标平台。不读源 markdown 就推 tag / 写摘要属于错误用法。核心优势：不需要平台 API key / 不需要 cookie 复制 / 不需要扫码 —— OpenCLI 复用 Chrome 已登录态，credential 不离开浏览器。
+description: 通过 OpenCLI Browser Bridge 在用户已登录的浏览器 page context 里跑同源 fetch，自动把 markdown 发布或更新到掘金 / CSDN / 知乎等技术博客平台。当用户说"发到掘金"、"发 CSDN"、"更新我的掘金文章"、给一个 .md 文件并问怎么发、或显式 /publish <platform> <path> 命令时触发。**v0.2 默认走 API 路线**（fetch with credentials:include 同源带 cookie），不操作 DOM；DOM 路线降级为 fallback。前置：本机已 npm install -g @jackwener/opencli，已装 Chrome Browser Bridge extension，用户已在浏览器登录目标平台。跨平台 macOS / Linux / Windows MINGW64（Windows 在 git bash 跑，不在 PowerShell）。不读源 markdown 就推 tag / 写摘要属于错误用法。核心优势：不需要平台 API key / 不需要 cookie 复制 / 不需要扫码 — credential 全在浏览器，同源 fetch 自动带。
 ---
 
-# web-publish — 用 OpenCLI 把文章发到任意博客平台
+# web-publish v0.2 — 用同源 fetch 把文章发到博客平台
+
+## 核心架构
+
+```
+~/article.md
+  ↓ Claude Read + 内容优化（标题字数 / tag / 摘要）
+  ↓ opencli browser eval (在 <platform>.com 页面里跑 JS)
+  ↓ fetch('/content_api/.../create', {credentials:'include', ...})    ← 1
+  ↓ fetch('/content_api/.../publish', {credentials:'include', ...})   ← 2
+  ↓ opencli browser open <article_url> 验证
+```
+
+**关键**：`credentials: 'include'` + 同源请求 = HttpOnly sessionid 浏览器自动带，无需手抓 cookie / token / csrf。
+
+## 跨平台命令规范
+
+| 平台 | 跑命令的 shell |
+|---|---|
+| macOS / Linux | 终端默认 bash / zsh ✓ |
+| Windows | **git bash / MINGW64**（**不要**在 PowerShell 跑，base64 / heredoc 语法不同）|
+
+所有命令模板用 bash 语法。如果用户在 PowerShell，要求他切到 git bash。
 
 ## 触发场景
 
 | 用户说 | 行为 |
 |---|---|
-| "把 article.md 发到掘金" | 走完整流程（platform=juejin） |
-| "发 CSDN 这篇" + 给文件路径 | 同上（platform=csdn） |
-| `/publish juejin <path>` | 强制走流程 |
-| `/publish csdn <path>` | 同上 |
-| "怎么发到 X" | 引导走流程 |
+| "把 article.md 发到掘金" | flow_new_article |
+| "发 CSDN 这篇" + 给文件路径 | flow_new_article (csdn) |
+| `/publish juejin <path>` | 强制 flow_new_article |
+| "更新我的掘金文章 X / 给文章 X 加一段" | flow_update_article |
+| "怎么发到 Y" | 引导走 flow_new_article |
 
-## 支持的平台（v0.1 范围）
+## 平台 adapter 状态 (2026-05)
 
-| 平台 | adapter 状态 | 备注 |
-|---|---|---|
-| 掘金（juejin.cn） | 🚧 v0.1 重点 | 通过 OpenCLI browser adapter 实现 |
-| CSDN | 🟡 v0.2 | 类似流程，编辑器 DOM 不同 |
-| 知乎专栏 | 🟡 v0.2 | OpenCLI 有内置基础 adapter |
-| 思否 SegmentFault | 🟡 v0.3 | 待评估 |
-| 博客园 | 🟡 v0.3 | 待评估 |
-
-平台 adapter 在 `~/.web-publish/adapters/<platform>.yaml` 下，可由用户用 OpenCLI 的 `opencli-adapter-author` skill 扩展。
+| 平台 | API 路线 | DOM fallback | adapter 文件 |
+|---|---|---|---|
+| 掘金 | ✓ 实测 (新文 + update) | ✓ | `~/.web-publish/adapters/juejin.yaml` |
+| CSDN | 🟡 待实测 | 🟡 | TBD |
+| 知乎专栏 | 🟡 待实测（zhihu OpenCLI adapter 只含读操作） | 🟡 | TBD |
+| 思否 / 博客园 | 🟡 待评估 | 🟡 | TBD |
 
 ## 前置检查
 
-派工开始前先探测 OpenCLI 是否就位：
-
 ```bash
-# OpenCLI CLI 是否在 PATH
-command -v opencli
-
-# Browser Bridge extension 状态
-opencli doctor
-
-# 浏览器是否登录目标平台
-opencli browser exec <platform>.checkLogin
+command -v opencli || echo "用 install.sh 装"
+opencli doctor                                # 期望全 [OK]
+opencli browser open https://juejin.cn        # 没跳登录 = 已登录
 ```
 
-3 种情况：
-
-| 信号 | 处理 |
+| 失败信号 | 处理 |
 |---|---|
-| `opencli` not found | 提示用户跑 `npm install -g @jackwener/opencli` 或重跑 install.sh |
-| Browser Bridge 未装 | 提示用户去 `chrome://extensions` Load unpacked（install.sh 应该已经引导过） |
-| 平台未登录 | 提示用户打开 `https://<platform>` 登录一次，OpenCLI 会自动识别 |
+| `opencli` not found | `~/.web-publish/install.sh` 重跑 |
+| Extension: not connected | 用户去 `chrome://extensions/` 装 / 重载（路径 `~/.web-publish/opencli-extension`） |
+| 跳到登录页 | 用户在浏览器登录目标平台 |
 
-## 发布流程（6 步）
+## 流程 A：发新文章 (flow_new_article)
 
-### 1. 解析用户意图
-- 用户指定的 platform（掘金 / csdn / 等）
-- 用户指定的 markdown 文件路径
-- 任何额外指令（先存草稿 / 不要优化 / 手动选 tag 等）
-
-### 2. Read markdown
+### 1. Read markdown
 ```
 Read(用户指定的 .md 文件路径)
 ```
-没指定路径 → 问一句"你的 markdown 文件在哪"，不要瞎猜。
+没指定 → 问"你的 markdown 在哪"，不要瞎猜。
 
-### 3. 内容优化（按下面"优化清单"做）
-- 标题（按平台规则调整字数）
-- 首段（前 100 字抓人）
-- Tag 推荐（按平台 tag 库匹配）
-- 摘要（80 字内）
-- 分类
+### 2. 内容优化
+读 `~/.web-publish/adapters/<platform>.yaml` 的 `content_rules`，按平台规则改：
+- 标题字数（掘金 20-30 / CSDN 15-30 / 知乎 < 50）
+- 首段 100 字抓人
+- Tag 推荐（从 `known_tags` 或调 platform 的 tag search endpoint）
+- 摘要 ≤ 100 字
 
-### 4. 调 OpenCLI 走平台 adapter
-
+### 3. 用 base64 把 markdown 注入 page eval
 ```bash
-opencli browser exec <platform>.publishArticle --input <(cat <<EOF
-{
-  "title": "<优化后标题>",
-  "markdown": "<文章内容>",
-  "tags": ["tag1", "tag2"],
-  "category": "<分类>",
-  "brief": "<80字摘要>",
-  "draft_only": false
-}
-EOF
-)
+# bash (mac/linux/git-bash)
+B64=$(base64 < "$MARKDOWN_PATH" | tr -d '\n')
+
+opencli browser eval "
+(async () => {
+  const bytes = atob('$B64');
+  const md = new TextDecoder('utf-8').decode(Uint8Array.from(bytes, c => c.charCodeAt(0)));
+  const r = await fetch('<draft_create endpoint>', {
+    method: 'POST', credentials: 'include',
+    headers: {'content-type': 'application/json'},
+    body: JSON.stringify({
+      title: '<优化后标题>',
+      mark_content: md,
+      brief_content: '<80字摘要>',
+      category_id: '<从 yaml categories 查>',
+      tag_ids: ['<id1>', '<id2>'],
+      cover_image: '',
+      edit_type: 10,
+      html_content: 'deprecated'
+    })
+  });
+  return JSON.stringify(await r.json());
+})()
+"
 ```
 
-OpenCLI 会：
-1. navigate 到平台编辑器页（已登录态自动用）
-2. fill 标题输入框
-3. 切换 markdown 模式 → paste 内容
-4. select tag / 分类
-5. click 发布按钮
-6. 等待跳转到文章 URL，返回 URL
+返回的 `data.id` 就是 draft_id。
 
-### 5. WebFetch 验证
+### 4. Publish
+```bash
+opencli browser eval "
+(async () => {
+  const r = await fetch('<publish endpoint>', {
+    method:'POST', credentials:'include',
+    headers:{'content-type':'application/json'},
+    body: JSON.stringify({draft_id: '<上一步的 id>', sync_to_org: false, column_ids: [], theme_ids: []})
+  });
+  return JSON.stringify(await r.json());
+})()
+"
 ```
-WebFetch(article_url, "标题应该是 <优化后标题>，确认文章可访问")
+
+返回 `data.article_id`。
+
+### 5. 验证 + 报告
+```bash
+opencli browser open https://<platform>.com/post/<article_id>
+# 或对掘金: https://juejin.cn/spost/<article_id>  (审核中临时路径)
 ```
 
-返回 200 + 标题正确 → 成功。否则报警告。
-
-### 6. 报告 + 冷启动提示
 ```
 ✅ 已发布到 <platform>
-URL: <article_url>
+草稿: <draft_id>
+文章: <article_url>
 标题: <title>
 Tag: <list>
+状态: 审核中 (掘金 /spost/) 或已公开 (/post/)
 
-冷启动提示（前 24h）:
+冷启动提示（前 24h）：
 - 自己点 1 个赞 + 加 1 个收藏
 - 朋友圈 / 微信群分享 5-10 次
 - 回复每条评论
 ```
 
-## 内容优化清单
+## 流程 B：Update 已发布文章 (flow_update_article)
 
-派工前 Claude 必须把 markdown 过一遍。不同平台规则不同：
+掘金 update 流程 = 4 个 fetch，0 DOM：
 
-### 掘金（juejin.cn）
-- 标题：20-25 字（不超 30）
-- Tag：3-5 个，从掘金 tag 库匹配
-- 分类必选（前端 / 后端 / 移动 / AI / 开发工具 / 阅读）
-- 封面图可选但 +30% 转化
+### 1. 找 draft_id (因为 article_id ≠ draft_id)
+```bash
+opencli browser eval "
+(async () => {
+  const r = await fetch('/content_api/v1/article/list_by_user?aid=2608&uuid=<UUID>&spider=0', {
+    method:'POST', credentials:'include', headers:{'content-type':'application/json'},
+    body: JSON.stringify({page_no: 1, page_size: 50, audit_status: null, status: null})
+  });
+  const j = await r.json();
+  const t = (j.data || []).find(a => a.article_info?.article_id === '<TARGET_ARTICLE_ID>');
+  return JSON.stringify({draft_id: t?.article_info?.draft_id, category_id: t?.article_info?.category_id, tag_ids: t?.article_info?.tag_ids});
+})()
+"
+```
 
-### CSDN
-- 标题：15-30 字
-- Tag：≤5 个，自由文本
-- 分类必选
-- 标签格式：英文逗号分隔
+⚠ **必须** `audit_status: null` + `status: null`，否则返回空数组。
 
-### 知乎专栏
-- 标题：自由长度（建议 < 50 字）
-- 话题：≤5 个
-- 无分类（按话题）
+⚠ uuid 从 page 任意请求 URL 抠（或 `opencli browser network --since 30s` 看捕获请求的 URL）。
 
-### 通用规则（所有平台）
-- 标题有"反差 / 数字 / 痛点"任一
-- 首段 100 字内说"读者得到什么"
-- 不要"今天给大家分享..."废话开场
-- 代码块 ≤ 30 行（长代码折叠）
-- 多用表格
+### 2. 拿原 mark_content
+```bash
+opencli browser eval "
+(async () => {
+  const r = await fetch('/content_api/v1/article_draft/detail?aid=2608&uuid=<UUID>', {
+    method:'POST', credentials:'include', headers:{'content-type':'application/json'},
+    body: JSON.stringify({draft_id: '<DRAFT_ID>'})
+  });
+  const j = await r.json();
+  return JSON.stringify({mark_len: j.data.article_draft.mark_content.length});
+})()
+"
+```
 
-## 本 skill 不派给 DeepSeek
+### 3. 在 page 内拼新内容 → update_draft
 
-任务由 Claude 自己干，不调 `delegate_to_deepseek`：
-1. 需要 Claude 已有的"中文 SEO 直觉"
+```bash
+SUPP_B64=$(base64 < /path/to/append-block.md | tr -d '\n')
+
+opencli browser eval "
+(async () => {
+  // 拿旧 draft
+  const r1 = await fetch('/content_api/v1/article_draft/detail?aid=2608&uuid=<UUID>', {
+    method:'POST', credentials:'include', headers:{'content-type':'application/json'},
+    body: JSON.stringify({draft_id: '<DRAFT_ID>'})
+  });
+  const d = (await r1.json()).data.article_draft;
+  // 解码补遗 + 拼接
+  const bytes = atob('$SUPP_B64');
+  const supplement = new TextDecoder('utf-8').decode(Uint8Array.from(bytes, c => c.charCodeAt(0)));
+  // update
+  const r2 = await fetch('/content_api/v1/article_draft/update', {
+    method:'POST', credentials:'include', headers:{'content-type':'application/json'},
+    body: JSON.stringify({
+      id: d.id,
+      title: d.title,
+      mark_content: d.mark_content + supplement,
+      brief_content: d.brief_content,
+      category_id: d.category_id,
+      tag_ids: (d.tag_ids || []).map(String),  // ⚠ 必须 string array
+      cover_image: d.cover_image || '',
+      edit_type: d.edit_type,
+      html_content: 'deprecated'
+    })
+  });
+  return JSON.stringify(await r2.json());
+})()
+"
+```
+
+### 4. Republish
+同 flow_new_article 第 4 步。返回相同 article_id（不是新建文章，是更新现有的）。
+
+**注意**：republish 触发审核，期间公开版显示旧版，过审后切换。
+
+## 派工归属 (谁干这个)
+
+任务由 **Claude 自己干**，不调 `delegate_to_deepseek`：
+1. 需要中文 SEO / 标题感觉直觉
 2. 内容优化 token 量小，DS overhead 不划算
-3. 要 WebFetch 验证，DS 不能联网
+3. 要 WebFetch / opencli 验证，DS 不能联网
 
 ## Fallback 策略
 
 | 症状 | 处理 |
 |---|---|
-| `opencli: command not found` | 提示装 OpenCLI，或重跑 `web-publish` install.sh |
-| Chrome Browser Bridge 未连接 | 提示用户在 Chrome 装 extension 并打开 |
-| `<platform>.checkLogin` 返回 false | 提示用户去 `https://<platform>` 登录一次 |
-| adapter 报 selector not found | 平台前端改了，需要更新 adapter（用 `opencli-adapter-author` skill 重新生成 selector） |
-| 发布按钮点击后无跳转 | 检查 captcha / 内容审核中（有些平台需要 1-N 分钟过审） |
-| WebFetch 验证标题不对 | 警告但不算失败（平台可能 SEO 改写） |
+| `opencli` not found | `~/.web-publish/install.sh` |
+| Extension not connected | 让用户去 `chrome://extensions/` 装 / 重载 |
+| `err_no: 2 请求路由不存在` | endpoint 名字过期，用 `opencli browser network --since 30s` 抓真实 endpoint |
+| `err_no: 2 参数错误` | 多半是签名墙（msToken/a_bogus），看 yaml 里这个 endpoint 是不是标注 ✗ 需签名 |
+| `unmarshal number into Go struct field tag_ids of type string` | `tag_ids` 要 string，`.map(String)` 转一下 |
+| 公开版没更新 | republish 在审核中，等几分钟到几十分钟 |
+| 发布按钮点击后无跳转（DOM 路线） | 多半 captcha / 内容审核中 |
 
 ## 用户显式控制
 
 | 用户说 | Claude 行为 |
 |---|---|
-| `/publish <platform> <path>` | 强制走流程 |
-| "先存草稿不要发布" | 走 adapter 但 draft_only=true，跳过 publish 按钮点击 |
-| "不要优化我的文章" | 直接发原文，跳过内容优化清单 |
-| "我要手动选 tag" | 优化后给推荐但不自动选，让用户决定 |
-| "重新发一遍" | 重新走流程（注意：可能产生重复文章） |
-| "发到所有支持的平台" | 循环 platforms，每个跑一次（先掘金 → CSDN → 知乎） |
+| `/publish <platform> <path>` | 强制 flow_new_article |
+| "更新 / 加段 / 改文章 X" | flow_update_article |
+| "先存草稿不要发布" | 走 draft_create 但跳过 publish 这一步 |
+| "不要优化我的文章" | 跳过内容优化清单，原文照发 |
+| "我要手动选 tag" | 优化后给推荐但不自动选 |
+| "重新发一遍" | 重新走流程（提示可能重复发文） |
+| "发到所有支持的平台" | 循环 platforms |
+
+## 内容优化清单
+
+派工前 Claude 必须把 markdown 过一遍。读 `~/.web-publish/adapters/<platform>.yaml` 的 `content_rules`：
+
+**通用**（所有平台）：
+- 标题：反差 / 数字 / 痛点 任一
+- 首段 100 字内说"读者得到什么"，不要"今天给大家分享..."
+- 代码块 ≤ 30 行（长代码折叠）
+- 多用表格 + 列表

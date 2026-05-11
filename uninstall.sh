@@ -44,15 +44,26 @@ else
     echo "       未检测到 opencli 全局包，跳过"
 fi
 
-# 3. 提示剩余文件
+# 3. 提示剩余文件 + Chrome extension
 echo ""
-echo "[3/3] 数据目录:"
+echo "[3/3] 数据目录 + Chrome extension:"
 if [ -d "$INSTALL_DIR" ]; then
-    echo "       $INSTALL_DIR 仍含 adapter 配置 / 日志"
+    echo "       $INSTALL_DIR 仍含:"
+    echo "         - adapters/        (平台 endpoint 配置)"
+    echo "         - opencli-extension/  (Chrome extension 解压文件)"
     echo "       要彻底清: rm -rf $INSTALL_DIR"
 fi
 echo ""
-echo "       Chrome Browser Bridge extension 要在 chrome://extensions 手动卸"
+echo "       Chrome Browser Bridge extension 要手动卸:"
+echo "         1. 打开 chrome://extensions/"
+echo "         2. 找到 'OpenCLI Browser Bridge' 卡片"
+echo "         3. 点 'Remove' / 移除"
+echo "         （只删本地文件 Chrome 里 extension 还在 — Load unpacked 是引用路径，"
+echo "          文件没了 extension 会报错但 Chrome 不会自动清掉它）"
+echo ""
+echo "       npm prefix 变更（如果是 install.sh 配的 ~/.npm-global）:"
+echo "         install.sh 可能改过你 npm 全局 prefix 到 ~/.npm-global 并加到 ~/.zshrc / ~/.bashrc"
+echo "         要还原: npm config delete prefix; 并手动删 shell rc 里那行 PATH"
 echo ""
 
 echo "✅ Claude Code 本身完全不受影响"
