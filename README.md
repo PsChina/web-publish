@@ -51,16 +51,16 @@ Claude 会调 `get_login_qrcode` 工具，你掘金 App 扫码即可。之后写
 ## 工作原理
 
 ```
-┌─────────────────────────────────────────┐
+┌──────────────────────────────────────────┐
 │  Claude Code (主对话)                    │
 │    ↓ /juejin path/to/article.md          │
 │  publish-to-juejin skill                 │
-│    ↓ Read + 优化                          │
-│    ↓ HTTP POST                            │
+│    ↓ Read + 优化                         │
+│    ↓ HTTP POST                           │
 │  juejin-mcp daemon (本地 127.0.0.1:18080)│
-│    ↓ HTTPS                                │
+│    ↓ HTTPS                               │
 │  api.juejin.cn (你的登录态)              │
-└─────────────────────────────────────────┘
+└──────────────────────────────────────────┘
 
 所有信息留在你机器。掘金账号 cookie 存在 ~/.publish-to-juejin/
 ```
