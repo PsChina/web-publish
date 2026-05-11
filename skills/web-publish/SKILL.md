@@ -1,6 +1,6 @@
 ---
 name: web-publish
-description: 通过 `web-publish` Python CLI 把 markdown 发布或更新到掘金 / CSDN / 知乎等技术博客平台。当用户说"发到掘金"、"发 CSDN"、"更新我的掘金文章"、给一个 .md 文件并问怎么发、或显式 /publish <platform> <path> 命令时触发。**v0.3 默认走 Python CLI**（Bash 调一行命令，看 JSON stdout 即可）—— **不要在 Claude 上下文里现场生成 fetch JS 或读整篇 markdown**，那会烧 5-14k tokens；用 CLI 烧 ~300 tokens。CLI 内部两个 backend：`opencli-bridge`（默认，浏览器同源 fetch，零 cookie 配置）和 `urllib`（服务器友好，.env cookie）。前置：已跑过本仓 install.sh（装 opencli + web-publish CLI + Chrome extension），用户已在浏览器登录目标平台（opencli-bridge 模式）或 `web-publish setup` 已写 ~/.web-publish/.env（urllib 模式）。跨平台 macOS / Linux / Windows MINGW64（Windows 在 git bash 跑，不在 PowerShell）。不读源 markdown 就推 tag / 写摘要属于错误用法。
+description: 通过 `web-publish` Python CLI 把 markdown 发布或更新到掘金 / CSDN / 知乎等技术博客平台。当用户说"发到掘金"、"发 CSDN"、"更新我的掘金文章"、给一个 .md 文件并问怎么发、或显式 /publish <platform> <path> 命令时触发。**v0.3 默认走 Python CLI**（Bash 调一行命令，看 JSON stdout 即可）—— **不要在 Claude 上下文里现场生成 fetch JS 或读整篇 markdown**，那会烧 5-14k tokens；用 CLI 烧 ~300 tokens。CLI 内部两个 backend：`urllib`（**默认**，读 ~/.web-publish/.env, 简单可靠, 不依赖 Chrome) 和 `opencli-bridge`（可选 `--backend opencli-bridge`, 浏览器同源 fetch, 零 .env 但依赖 Chrome + extension 连通）。前置：已跑过本仓 install.sh，且**首次使用前**用户跑过 `web-publish setup` 配 cookie 写到 ~/.web-publish/.env（CLI 报 BackendError 找不到 .env 时引导用户跑 setup）。跨平台 macOS / Linux / Windows MINGW64（Windows 在 git bash 跑，不在 PowerShell）。不读源 markdown 就推 tag / 写摘要属于错误用法。
 ---
 
 # web-publish v0.3 — 用 Python CLI 发文章（省 token）
@@ -134,14 +134,16 @@ web-publish categories juejin              # 分类 id 表 (不调 API)
 
 ## Backend 切换
 
-默认 `opencli-bridge`（同源 fetch / 零配置）。如果用户在 headless 服务器或想用 .env：
+默认 `urllib`（读 .env, 简单可靠, 不依赖 Chrome）。前置：用户跑过 `web-publish setup` 写 ~/.web-publish/.env。
+
+如果用户**不想抓 cookie**，可以显式用 opencli-bridge（浏览器同源 fetch）：
 
 ```bash
-web-publish publish juejin /tmp/a.md ... --backend urllib
-web-publish health juejin --backend urllib
+web-publish publish juejin /tmp/a.md ... --backend opencli-bridge
+web-publish health juejin --backend opencli-bridge
 ```
 
-urllib 需要先 `web-publish setup` 写 ~/.web-publish/.env。
+opencli-bridge 前置：Chrome 在跑 + Browser Bridge extension 装好且 `opencli doctor` 通 + 用户已在 Chrome 登录目标平台。本路径**比 urllib 脆**（依赖外部状态），更适合一次性 / 临时场景。
 
 ## 派工归属
 

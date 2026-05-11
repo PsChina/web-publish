@@ -185,9 +185,12 @@ def cmd_setup(args) -> int:
 def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--backend",
-        choices=["opencli-bridge", "urllib"],
-        default="opencli-bridge",
-        help="opencli-bridge (默认, 零 cookie 配置) / urllib (.env 模式, 服务器友好)",
+        choices=["urllib", "opencli-bridge"],
+        default="urllib",
+        help=(
+            "urllib (默认, 读 ~/.web-publish/.env, 简单可靠, 服务器友好) "
+            "/ opencli-bridge (浏览器同源 fetch, 零 .env 但依赖 Chrome 在跑 + extension 连通)"
+        ),
     )
 
 

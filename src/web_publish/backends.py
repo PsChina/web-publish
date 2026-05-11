@@ -98,9 +98,14 @@ class OpenCLIBridgeBackend:
 
     前置: opencli 在 PATH; Chrome Browser Bridge extension 已装且 doctor 通.
     cookie 不离开浏览器, 用户不需要写 .env.
+
+    实现细节: 同源 fetch 用相对路径 (例如 /content_api/...), 这要求当前 page
+    必须在目标 origin (juejin.cn) 上。如果当前 tab 在 about:blank / chrome://
+    或别的域, 相对 URL 解析会失败。__init__ 时确保 page 在 juejin.cn。
     """
 
     name = "opencli-bridge"
+    PAGE_ORIGIN = "https://juejin.cn"
 
     def __init__(self, base: str, opencli_path: str | None = None):
         self.base = base.rstrip("/")
@@ -110,6 +115,36 @@ class OpenCLIBridgeBackend:
                 "找不到 opencli; 装一份 (npm install -g @jackwener/opencli) "
                 "或重跑 install.sh; 也可以换 --backend urllib"
             )
+        self._page_ensured = False
+
+    def _ensure_page(self) -> None:
+        """确保 OpenCLI 当前活跃 tab 在 juejin.cn (用于同源 fetch).
+
+        用 --window background 在隐藏 tab 打开, 不打扰用户当前的 Chrome tab。
+        Chrome 已登录态 (cookie) 是浏览器级别共享, background tab 自动继承。
+        """
+        if self._page_ensured:
+            return
+        try:
+            r = subprocess.run(
+                [self.opencli, "browser", "get", "url"],
+                capture_output=True, text=True, timeout=15,
+            )
+            current = r.stdout.strip()
+        except subprocess.TimeoutExpired:
+            current = ""
+
+        if not current.startswith("https://juejin.cn") and not current.startswith("http://juejin.cn"):
+            r = subprocess.run(
+                [self.opencli, "browser", "open", self.PAGE_ORIGIN],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode != 0:
+                raise BackendError(
+                    f"opencli browser open {self.PAGE_ORIGIN} (background) 失败: "
+                    f"{r.stderr or r.stdout}"
+                )
+        self._page_ensured = True
 
     @staticmethod
     def _find_opencli() -> str | None:
@@ -133,6 +168,9 @@ class OpenCLIBridgeBackend:
         params.setdefault("spider", "0")
         qs = "&".join(f"{k}={v}" for k, v in params.items())
         full_path = f"{path}?{qs}" if qs else path
+
+        # 确保 page 在 juejin.cn 上 (同源 fetch 需要), 用 background tab 不打扰用户
+        self._ensure_page()
 
         payload_json = json.dumps(payload, ensure_ascii=False)
         # JS 注入: 用 JSON 自身做引号 safe; payload 通过 JSON.parse 拿回
