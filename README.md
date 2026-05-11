@@ -116,7 +116,7 @@ v0.1 走 DOM click 操作（fill 标题 / setValue 内容 / click 发布），v0
 
 新增平台流程：在已登录平台的 page 跑 `opencli browser network --since 30s` 抓真实 publish endpoint → 写一份 `adapters/<platform>.yaml`，30 分钟搞定一个平台。
 
-## 为什么这个项目
+## 为什么选择这个项目
 
 | 现有方案 | 痛点 |
 |---|---|
